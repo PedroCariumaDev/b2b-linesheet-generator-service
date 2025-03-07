@@ -11,14 +11,41 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
+const allowedOrigins = [
+  'https://test-cariuma.myshopify.com', 
+  'https://*.myshopify.com',  // Allow all Shopify stores
+  process.env.ALLOWED_ORIGIN || '*'
+];
 
 // Enable CORS and JSON parsing
 app.use(cors({
-  origin: allowedOrigin,
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check if the origin is allowed
+    const isAllowed = allowedOrigins.some(allowedOrigin => {
+      // Handle wildcard domains
+      if (allowedOrigin.includes('*')) {
+        const pattern = new RegExp(allowedOrigin.replace('*', '.*'));
+        return pattern.test(origin);
+      }
+      return allowedOrigin === origin;
+    });
+    
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      console.log(`Origin ${origin} not allowed by CORS`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  maxAge: 86400 // 24 hours
 }));
+app.options('*', cors());
 app.use(express.json({ limit: '10mb' })); // Increase limit for larger data
 
 // Test endpoint
