@@ -2,6 +2,7 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const archiver = require('archiver'); // Add this for ZIP functionality
 const generateExcel = require('./excel-generator');
 const shopifyApi = require('./shopify-api');
 
@@ -26,15 +27,55 @@ app.get('/', (req, res) => {
 });
 
 /**
- * Fetch B2B catalogs for a customer
- * GET /api/catalogs/:customerId
+ * Fetch B2B data for a company location
+ * GET /api/location/:locationId/b2b-data
  */
-app.get('/api/catalogs/:customerId', async (req, res) => {
+app.get('/api/location/:locationId/b2b-data', async (req, res) => {
   try {
-    const { customerId } = req.params;
-    console.log(`Fetching catalogs for customer: ${customerId}`);
+    const { locationId } = req.params;
+    console.log(`Fetching B2B data for location: ${locationId}`);
     
-    const catalogs = await shopifyApi.fetchB2BCatalogs(customerId);
+    const data = await shopifyApi.fetchLocationB2BData(locationId);
+    res.json(data);
+  } catch (error) {
+    console.error('Error fetching B2B data for location:', error);
+    res.status(500).json({
+      error: 'Failed to fetch B2B data',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Fetch company location data
+ * GET /api/location/:locationId
+ */
+app.get('/api/location/:locationId', async (req, res) => {
+  try {
+    const { locationId } = req.params;
+    console.log(`Fetching location: ${locationId}`);
+    
+    const locationData = await shopifyApi.fetchCompanyLocation(locationId);
+    res.json(locationData);
+  } catch (error) {
+    console.error('Error fetching location:', error);
+    res.status(500).json({
+      error: 'Failed to fetch location',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Fetch catalogs for a company location
+ * GET /api/location/:locationId/catalogs
+ */
+app.get('/api/location/:locationId/catalogs', async (req, res) => {
+  try {
+    const { locationId } = req.params;
+    console.log(`Fetching catalogs for location: ${locationId}`);
+    
+    const catalogs = await shopifyApi.fetchLocationCatalogs(locationId);
     res.json(catalogs);
   } catch (error) {
     console.error('Error fetching catalogs:', error);
@@ -47,9 +88,9 @@ app.get('/api/catalogs/:customerId', async (req, res) => {
 
 /**
  * Fetch products for a catalog
- * GET /api/catalogs/:catalogId/products
+ * GET /api/catalog/:catalogId/products
  */
-app.get('/api/catalogs/:catalogId/products', async (req, res) => {
+app.get('/api/catalog/:catalogId/products', async (req, res) => {
   try {
     const { catalogId } = req.params;
     console.log(`Fetching products for catalog: ${catalogId}`);
@@ -66,37 +107,9 @@ app.get('/api/catalogs/:catalogId/products', async (req, res) => {
 });
 
 /**
- * Fetch complete data for multiple catalogs (catalogs + products)
- * GET /api/complete-data/:customerId
+ * Excel generation endpoint
+ * POST /api/generate-linesheet
  */
-app.get('/api/complete-data/:customerId', async (req, res) => {
-  try {
-    const { customerId } = req.params;
-    console.log(`Fetching complete data for customer: ${customerId}`);
-    
-    // Get catalogs for the customer
-    const catalogs = await shopifyApi.fetchB2BCatalogs(customerId);
-    
-    // Fetch products for each catalog
-    for (const catalog of catalogs) {
-      catalog.products = await shopifyApi.fetchCatalogProducts(catalog.id);
-    }
-    
-    // Return the complete data
-    res.json({
-      customerId,
-      catalogs
-    });
-  } catch (error) {
-    console.error('Error fetching complete data:', error);
-    res.status(500).json({
-      error: 'Failed to fetch complete data',
-      message: error.message
-    });
-  }
-});
-
-// Excel generation endpoint
 app.post('/api/generate-linesheet', async (req, res) => {
   try {
     console.log('Received request to generate linesheet');
@@ -114,16 +127,86 @@ app.post('/api/generate-linesheet', async (req, res) => {
     // Generate Excel file(s)
     const result = await generateExcel(req.body);
     
-    // Set response headers for file download
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-    
-    // Send the Excel file as the response
-    res.send(result.buffer);
+    // Handle multiple files (separate linesheets)
+    if (outputType === 'separate' && result.files && result.files.length > 0) {
+      // For separate linesheets, we'll zip the files and send the zip
+      if (result.files.length > 1) {
+        // Set response headers for ZIP download - ensuring proper content type
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${company.name.replace(/\s+/g, '_')}_Linesheets.zip"`);
+        
+        // Log the response headers for debugging
+        console.log('Sending ZIP file with headers:', {
+          'Content-Type': res.getHeader('Content-Type'),
+          'Content-Disposition': res.getHeader('Content-Disposition')
+        });
+        
+        // Create a zip stream directly to the response
+        const archive = archiver('zip', {
+          zlib: { level: 9 } // Compression level
+        });
+        
+        // Listen for all archive data to be written
+        archive.on('end', function() {
+          console.log('Archive wrote %d bytes', archive.pointer());
+        });
+        
+        // Handle archive warnings
+        archive.on('warning', function(err) {
+          if (err.code === 'ENOENT') {
+            console.warn('Archive warning:', err);
+          } else {
+            throw err;
+          }
+        });
+        
+        // Handle archive errors
+        archive.on('error', function(err) {
+          console.error('Archive error:', err);
+          throw err;
+        });
+        
+        // Pipe archive data to the response
+        archive.pipe(res);
+        
+        // Add each Excel file to the archive
+        result.files.forEach((file) => {
+          console.log(`Adding file to archive: ${file.filename}`);
+          archive.append(file.buffer, { name: file.filename });
+        });
+        
+        // Finalize the archive and send
+        console.log('Finalizing archive...');
+        archive.finalize();
+      }
+      // If only one file, send it directly
+      else {
+        const file = result.files[0];
+        
+        // Set response headers for Excel download
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+        
+        // Send the Excel file as the response
+        res.send(file.buffer);
+      }
+    } 
+    // Handle single file (combined linesheet)
+    else {
+      // Set response headers for file download
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+      
+      // Send the Excel file as the response
+      res.send(result.buffer);
+    }
     
   } catch (error) {
     console.error('Error generating Excel:', error);
-    res.status(500).json({ error: 'Failed to generate Excel file' });
+    res.status(500).json({ 
+      error: 'Failed to generate Excel file',
+      message: error.message
+    });
   }
 });
 

@@ -49,41 +49,244 @@ async function graphqlRequest(query, variables = {}) {
 }
 
 /**
- * Fetch B2B catalogs associated with a customer
- * @param {string} customerId - Shopify customer ID
- * @returns {Promise<Array>} - Array of catalogs
+ * Fetch company location data by ID
+ * @param {string} locationId - Company location ID
+ * @returns {Promise<Object>} - Location data
  */
-async function fetchB2BCatalogs(customerId) {
-  console.log('Fetching B2B catalogs for customer:', customerId);
+async function fetchCompanyLocation(locationId) {
+  console.log('Fetching company location data:', locationId);
   
   try {
-    // Ensure customerId is a string and prepare it in GID format if needed
-    customerId = String(customerId || '');
-    if (!customerId.startsWith('gid://')) {
-      customerId = `gid://shopify/Customer/${customerId}`;
+    // Ensure locationId is in GID format
+    if (!String(locationId).startsWith('gid://')) {
+      locationId = `gid://shopify/CompanyLocation/${locationId}`;
     }
     
-    // GraphQL query for fetching B2B customer data
-    const customerB2BQuery = `
-      query GetCustomerB2B($customerId: ID!) {
-        customer(id: $customerId) {
+    // Updated query to match Shopify's schema
+    const locationQuery = `
+      query GetCompanyLocation($locationId: ID!) {
+        companyLocation(id: $locationId) {
           id
-          b2b {
-            company {
+          name
+          createdAt
+          updatedAt
+          currency
+          company {
+            id
+            name
+            externalId
+            mainContact {
               id
-              name
-              catalogs(first: 20) {
-                edges {
-                  node {
-                    id
-                    name
-                    status
-                    metafields(first: 10) {
-                      edges {
-                        node {
-                          key
-                          value
-                        }
+              customer {
+                firstName
+                lastName
+                email
+                phone
+              }
+            }
+          }
+          shippingAddress {
+            address1
+            address2
+            city
+            province
+            zip
+            country
+          }
+        }
+      }
+    `;
+    
+    const response = await graphqlRequest(locationQuery, { locationId });
+    
+    if (!response?.companyLocation) {
+      console.warn('Location not found:', locationId);
+      throw new Error('Location not found');
+    }
+    
+    // Format company data from location response
+    const location = response.companyLocation;
+    const company = location.company || {};
+    
+    // Extract contact info properly from the mainContact structure
+    let contact = {};
+    if (company.mainContact && company.mainContact.customer) {
+      const customerData = company.mainContact.customer;
+      contact = {
+        firstName: customerData.firstName || '',
+        lastName: customerData.lastName || '',
+        email: customerData.email || '',
+        phone: customerData.phone || ''
+      };
+    }
+    
+    const address = location.shippingAddress || {};
+    
+    return {
+      location: {
+        id: location.id,
+        name: location.name,
+        currency: location.currency,
+        createdAt: location.createdAt,
+        updatedAt: location.updatedAt,
+        address: {
+          address1: address.address1 || '',
+          address2: address.address2 || '',
+          city: address.city || '',
+          province: address.province || '',
+          zip: address.zip || '',
+          country: address.country || ''
+        }
+      },
+      company: {
+        id: company.id || '',
+        name: company.name || '',
+        externalId: company.externalId || '',
+        contact: contact
+      }
+    };
+  } catch (error) {
+    console.error('Error fetching company location:', error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch catalogs for a company location
+ * @param {string} locationId - Company location ID
+ * @returns {Promise<Array>} - Array of catalogs
+ */
+async function fetchLocationCatalogs(locationId) {
+  console.log('Fetching catalogs for company location:', locationId);
+  
+  try {
+    // Ensure locationId is in GID format
+    if (!String(locationId).startsWith('gid://')) {
+      locationId = `gid://shopify/CompanyLocation/${locationId}`;
+    }
+    
+    // Basic catalog query with no metafields
+    const catalogsQuery = `
+      query GetLocationCatalogs($locationId: ID!) {
+        companyLocation(id: $locationId) {
+          id
+          name
+          catalogs(first: 20) {
+            edges {
+              node {
+                id
+                title
+                status
+                priceList {
+                  id
+                  name
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    
+    const response = await graphqlRequest(catalogsQuery, { locationId });
+    
+    if (!response?.companyLocation?.catalogs?.edges) {
+      console.warn('No catalogs found for location:', locationId);
+      return [];
+    }
+    
+    // Format catalog data - just return basic catalog data
+    return response.companyLocation.catalogs.edges.map(edge => {
+      const catalog = edge.node;
+      
+      return {
+        id: catalog.id,
+        name: catalog.title,
+        status: catalog.status,
+        priceListId: catalog.priceList?.id,
+        priceListName: catalog.priceList?.name,
+        // Products will be fetched separately
+        products: []
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching location catalogs:', error);
+    
+    // Use mock data as a fallback
+    console.warn('Using mock catalogs data due to GraphQL errors');
+    return getMockCatalogs();
+  }
+}
+
+/**
+ * Check if a company location has a specific catalog
+ * @param {string} locationId - Company location ID
+ * @param {string} catalogId - Catalog ID to check
+ * @returns {Promise<boolean>} - Whether the location has the catalog
+ */
+async function checkLocationHasCatalog(locationId, catalogId) {
+  try {
+    // Ensure IDs are in GID format
+    if (!String(locationId).startsWith('gid://')) {
+      locationId = `gid://shopify/CompanyLocation/${locationId}`;
+    }
+    if (!String(catalogId).startsWith('gid://')) {
+      catalogId = `gid://shopify/Catalog/${catalogId}`;
+    }
+    
+    const query = `
+      query CheckLocationCatalog($locationId: ID!, $catalogId: ID!) {
+        companyLocation(id: $locationId) {
+          inCatalog(catalogId: $catalogId)
+        }
+      }
+    `;
+    
+    const response = await graphqlRequest(query, { locationId, catalogId });
+    return response?.companyLocation?.inCatalog || false;
+  } catch (error) {
+    console.error('Error checking location catalog:', error);
+    return false;
+  }
+}
+
+/**
+ * Fetch products for a catalog
+ * @param {string} catalogId - Catalog ID
+ * @returns {Promise<Array>} - Array of products
+ */
+async function fetchCatalogProducts(catalogId) {
+  console.log('Fetching products for catalog:', catalogId);
+  
+  try {
+    // Ensure catalogId is in GID format
+    if (!String(catalogId).startsWith('gid://')) {
+      catalogId = `gid://shopify/Catalog/${catalogId}`;
+    }
+    
+    // Basic products query
+    const productsQuery = `
+      query GetCatalogProducts($catalogId: ID!) {
+        catalog(id: $catalogId) {
+          id
+          title
+          publication {
+            products(first: 100) {
+              edges {
+                node {
+                  id
+                  title
+                  handle
+                  featuredImage {
+                    url
+                  }
+                  productType
+                  variants(first: 1) {
+                    edges {
+                      node {
+                        id
+                        price
+                        compareAtPrice
                       }
                     }
                   }
@@ -95,269 +298,209 @@ async function fetchB2BCatalogs(customerId) {
       }
     `;
     
-    const customerResponse = await graphqlRequest(customerB2BQuery, { customerId });
+    const response = await graphqlRequest(productsQuery, { catalogId });
     
-    // Check if we got a valid response with catalogs
-    if (!customerResponse?.customer?.b2b?.company?.catalogs?.edges) {
-      console.warn('No B2B catalogs found or invalid response structure for customer:', customerId);
-      
-      // Try alternative approach: query all B2B catalogs
-      return await fetchAllB2BCatalogs();
-    }
-    
-    // Extract catalogs from the response
-    const catalogEdges = customerResponse.customer.b2b.company.catalogs.edges;
-    
-    // Format catalog data
-    return catalogEdges.map(edge => {
-      const catalog = edge.node;
-      
-      // Extract season year from metafields if available
-      let seasonYear = '';
-      if (catalog.metafields?.edges) {
-        const seasonYearMeta = catalog.metafields.edges.find(
-          meta => meta.node.key === 'season_year' || meta.node.key === 'seasonYear'
-        );
-        
-        if (seasonYearMeta) {
-          seasonYear = seasonYearMeta.node.value;
-        }
-      }
-      
-      return {
-        id: catalog.id,
-        name: catalog.name,
-        status: catalog.status,
-        seasonYear: seasonYear
-      };
-    });
-  } catch (error) {
-    console.error('Error fetching B2B catalogs via GraphQL:', error);
-    
-    // Try alternative approach on error
-    console.log('Attempting to fetch all B2B catalogs instead...');
-    return await fetchAllB2BCatalogs();
-  }
-}
-
-/**
- * Fetch all B2B catalogs in the store
- * Used as a fallback if customer-specific query fails
- */
-async function fetchAllB2BCatalogs() {
-  console.log('Fetching all B2B catalogs in the store');
-  
-  try {
-    const allCatalogsQuery = `
-      query GetAllB2BCatalogs {
-        b2bCatalogs(first: 20) {
-          edges {
-            node {
-              id
-              name
-              status
-              company {
-                name
-              }
-              metafields(first: 10) {
-                edges {
-                  node {
-                    key
-                    value
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-    
-    const response = await graphqlRequest(allCatalogsQuery);
-    
-    if (!response?.b2bCatalogs?.edges) {
-      console.warn('No B2B catalogs found or invalid response structure');
-      
-      // Fall back to mock data if GraphQL approach fails
-      console.warn('Using mock catalogs data as fallback');
-      return getMockCatalogs();
-    }
-    
-    // Extract and format catalog data
-    return response.b2bCatalogs.edges.map(edge => {
-      const catalog = edge.node;
-      
-      // Extract season year from metafields if available
-      let seasonYear = '';
-      if (catalog.metafields?.edges) {
-        const seasonYearMeta = catalog.metafields.edges.find(
-          meta => meta.node.key === 'season_year' || meta.node.key === 'seasonYear'
-        );
-        
-        if (seasonYearMeta) {
-          seasonYear = seasonYearMeta.node.value;
-        }
-      }
-      
-      return {
-        id: catalog.id,
-        name: catalog.name,
-        status: catalog.status,
-        companyName: catalog.company?.name || '',
-        seasonYear: seasonYear
-      };
-    });
-  } catch (error) {
-    console.error('Error fetching all B2B catalogs:', error);
-    
-    // Use mock data as a final fallback
-    console.warn('Using mock catalogs data due to GraphQL errors');
-    return getMockCatalogs();
-  }
-}
-
-/**
- * Fetch products for a specific B2B catalog
- * @param {string} catalogId - B2B catalog ID
- * @returns {Promise<Array>} - Array of products
- */
-async function fetchCatalogProducts(catalogId) {
-  console.log('Fetching products for catalog via GraphQL:', catalogId);
-  
-  try {
-    const catalogQuery = `
-      query GetB2BCatalog($catalogId: ID!) {
-        b2bCatalog(id: $catalogId) {
-          id
-          name
-          status
-          metafields(first: 10) {
-            edges {
-              node {
-                key
-                value
-              }
-            }
-          }
-          products(first: 100) {
-            edges {
-              node {
-                id
-                title
-                handle
-                featuredImage {
-                  url
-                }
-                metafields(first: 15) {
-                  edges {
-                    node {
-                      key
-                      value
-                    }
-                  }
-                }
-                productType
-                variants(first: 1) {
-                  edges {
-                    node {
-                      id
-                      price
-                      compareAtPrice
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-    
-    const response = await graphqlRequest(catalogQuery, { catalogId });
-    
-    if (!response?.b2bCatalog?.products?.edges) {
-      console.warn('No products found for catalog or invalid response structure:', catalogId);
+    if (!response?.catalog?.publication?.products?.edges) {
+      console.warn('No products found for catalog:', catalogId);
       return [];
     }
     
-    // Format product data
-    return response.b2bCatalog.products.edges.map(edge => {
+    // Simply format the product data
+    return response.catalog.publication.products.edges.map(edge => {
       const product = edge.node;
-      return formatProductData(product);
+      
+      // Get image URL
+      let imageUrl = '/api/placeholder/120/120';
+      if (product.featuredImage?.url) {
+        imageUrl = product.featuredImage.url;
+      }
+      
+      // Get pricing from the first variant
+      let wholesalePrice = 0;
+      let suggRetailPrice = 0;
+      
+      if (product.variants?.edges?.length > 0) {
+        const variant = product.variants.edges[0].node;
+        wholesalePrice = parseFloat(variant.price) || 0;
+        suggRetailPrice = parseFloat(variant.compareAtPrice) || wholesalePrice * 2.5;
+      }
+      
+      // Return simplified product structure
+      return {
+        id: product.id,
+        name: product.title,
+        image: imageUrl,
+        styleNumber: '',
+        color: '',
+        colorCode: '',
+        season: '',
+        evergreen: 'No',
+        countryOfOrigin: '',
+        fabrication: '',
+        materialComposition: '',
+        category: product.productType || '',
+        subcategory: '',
+        sizeBreak: '1',
+        wholesalePrice,
+        suggRetailPrice
+      };
     });
   } catch (error) {
-    console.error(`Error fetching products for catalog ${catalogId}:`, error);
+    console.error('Error fetching catalog products:', error);
     
-    // Use mock data as a fallback
-    console.warn('Using mock product data due to GraphQL errors');
+    // Use alternative approach if the direct catalog query fails
+    return await fetchProductsAlternative(catalogId);
+  }
+}
+
+/**
+ * Alternative approach to fetch products if catalog query fails
+ * @param {string} catalogId - Catalog ID
+ * @returns {Promise<Array>} - Array of products
+ */
+async function fetchProductsAlternative(catalogId) {
+  console.log('Using alternative method to fetch products for catalog:', catalogId);
+  
+  try {
+    // Extract numeric ID from catalog ID if it's in GID format
+    let catalogNumericId = catalogId;
+    if (catalogId.includes('/')) {
+      catalogNumericId = catalogId.split('/').pop();
+    }
+    
+    // Try querying products with a filter for the catalog ID in metafields or tags
+    const productsQuery = `
+      query GetProductsByCatalog {
+        products(first: 100, query: "tag:catalog-${catalogNumericId} OR metafield_key_value:catalog_id=${catalogNumericId}") {
+          edges {
+            node {
+              id
+              title
+              handle
+              featuredImage {
+                url
+              }
+              productType
+              tags
+              variants(first: 1) {
+                edges {
+                  node {
+                    id
+                    price
+                    compareAtPrice
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    
+    const productsResponse = await graphqlRequest(productsQuery);
+    
+    if (productsResponse?.products?.edges && productsResponse.products.edges.length > 0) {
+      console.log(`Found ${productsResponse.products.edges.length} products using alternative query`);
+      
+      // Format products data from the alternative query
+      return productsResponse.products.edges.map(edge => {
+        const product = edge.node;
+        
+        // Get image URL
+        let imageUrl = '/api/placeholder/120/120';
+        if (product.featuredImage?.url) {
+          imageUrl = product.featuredImage.url;
+        }
+        
+        // Get pricing from the first variant
+        let wholesalePrice = 0;
+        let suggRetailPrice = 0;
+        
+        if (product.variants?.edges?.length > 0) {
+          const variant = product.variants.edges[0].node;
+          wholesalePrice = parseFloat(variant.price) || 0;
+          suggRetailPrice = parseFloat(variant.compareAtPrice) || wholesalePrice * 2.5;
+        }
+        
+        // Return simplified product structure
+        return {
+          id: product.id,
+          name: product.title,
+          image: imageUrl,
+          styleNumber: '',
+          color: '',
+          colorCode: '',
+          season: '',
+          evergreen: 'No',
+          countryOfOrigin: '',
+          fabrication: '',
+          materialComposition: '',
+          category: product.productType || '',
+          subcategory: '',
+          sizeBreak: '1',
+          wholesalePrice,
+          suggRetailPrice
+        };
+      });
+    }
+    
+    // If still no products, use mock data
+    console.warn('Alternative product query failed, using mock data');
+    return getMockProducts(catalogId);
+  } catch (error) {
+    console.error('Alternative product query failed:', error);
     return getMockProducts(catalogId);
   }
 }
 
 /**
- * Format product data from GraphQL response into a consistent structure
- * @param {Object} product - Product data from GraphQL
- * @returns {Object} - Formatted product data
+ * Fetch all catalog data for a location
+ * @param {string} locationId - Company location ID
+ * @returns {Promise<Object>} - Location, company and catalogs with products
  */
-function formatProductData(product) {
-  // Helper function to extract metafield value
-  const getMetaValue = (metafields, key) => {
-    if (!metafields?.edges) return '';
+async function fetchLocationB2BData(locationId) {
+  console.log('Fetching complete B2B data for location:', locationId);
+  
+  try {
+    // 1. Get the location and company data
+    const locationData = await fetchCompanyLocation(locationId);
     
-    const metafield = metafields.edges.find(
-      edge => edge.node.key === key
-    );
+    // 2. Get catalogs for the location
+    const catalogs = await fetchLocationCatalogs(locationId);
     
-    return metafield ? metafield.node.value : '';
-  };
-  
-  // Get image URL
-  let imageUrl = '/api/placeholder/120/120';
-  if (product.featuredImage?.url) {
-    imageUrl = product.featuredImage.url;
+    if (catalogs.length === 0) {
+      console.warn('No catalogs found for location');
+      return { ...locationData, catalogs: [] };
+    }
+    
+    // 3. Just fetch products for each catalog
+    for (const catalog of catalogs) {
+      catalog.products = await fetchCatalogProducts(catalog.id);
+    }
+    
+    return { ...locationData, catalogs };
+  } catch (error) {
+    console.error('Error fetching complete B2B data for location:', error);
+    
+    // Return mock data as fallback
+    return {
+      location: {
+        id: `gid://shopify/CompanyLocation/mock`,
+        name: 'Mock Location',
+        currency: 'USD',
+        address: {}
+      },
+      company: {
+        id: `gid://shopify/Company/mock`,
+        name: 'Mock Company',
+        contact: {}
+      },
+      catalogs: getMockCatalogs().map(catalog => {
+        catalog.products = getMockProducts(catalog.id);
+        return catalog;
+      })
+    };
   }
-  
-  // Get pricing from the first variant
-  let wholesalePrice = 0;
-  let suggRetailPrice = 0;
-  
-  if (product.variants?.edges?.length > 0) {
-    const variant = product.variants.edges[0].node;
-    wholesalePrice = parseFloat(variant.price) || 0;
-    suggRetailPrice = parseFloat(variant.compareAtPrice) || wholesalePrice * 2.5;
-  }
-  
-  // Extract product metadata
-  const styleNumber = getMetaValue(product.metafields, 'style_number');
-  const color = getMetaValue(product.metafields, 'color');
-  const colorCode = getMetaValue(product.metafields, 'color_code');
-  const season = getMetaValue(product.metafields, 'season');
-  const evergreen = getMetaValue(product.metafields, 'evergreen') || 'No';
-  const countryOfOrigin = getMetaValue(product.metafields, 'country_of_origin');
-  const fabrication = getMetaValue(product.metafields, 'fabrication');
-  const materialComposition = getMetaValue(product.metafields, 'material_composition');
-  const subcategory = getMetaValue(product.metafields, 'subcategory');
-  const sizeBreak = getMetaValue(product.metafields, 'size_break') || '1';
-  
-  // Return normalized product structure
-  return {
-    id: product.id,
-    name: product.title,
-    image: imageUrl,
-    styleNumber,
-    color,
-    colorCode,
-    season,
-    evergreen,
-    countryOfOrigin,
-    fabrication,
-    materialComposition,
-    category: product.productType || '',
-    subcategory,
-    sizeBreak,
-    wholesalePrice,
-    suggRetailPrice
-  };
 }
 
 /**
@@ -366,7 +509,7 @@ function formatProductData(product) {
 function getMockCatalogs() {
   return [
     {
-      id: "gid://shopify/B2BCatalog/12345",
+      id: "gid://shopify/Catalog/12345",
       name: "SS25 Style",
       status: "ACTIVE",
       seasonYear: "Spring/Summer 2025",
@@ -374,7 +517,7 @@ function getMockCatalogs() {
       completeShip: "2025-02-28"
     },
     {
-      id: "gid://shopify/B2BCatalog/67890",
+      id: "gid://shopify/Catalog/67890",
       name: "FW25 Style",
       status: "ACTIVE",
       seasonYear: "Fall/Winter 2025",
@@ -453,6 +596,9 @@ function getMockProducts(catalogId) {
 }
 
 module.exports = {
-  fetchB2BCatalogs,
-  fetchCatalogProducts
+  fetchCompanyLocation,
+  fetchLocationCatalogs,
+  fetchCatalogProducts,
+  fetchLocationB2BData,
+  checkLocationHasCatalog
 };
