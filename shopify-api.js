@@ -211,10 +211,7 @@ async function fetchLocationCatalogs(locationId) {
     });
   } catch (error) {
     console.error('Error fetching location catalogs:', error);
-    
-    // Use mock data as a fallback
-    console.warn('Using mock catalogs data due to GraphQL errors');
-    return getMockCatalogs();
+    throw error;
   }
 }
 
@@ -281,12 +278,46 @@ async function fetchCatalogProducts(catalogId) {
                     url
                   }
                   productType
+                  styleNumber: metafield(namespace: "cariuma-v2", key: "style_number") {
+                    value
+                  }
+                  colorCode: metafield(namespace: "cariuma-v2", key: "color_code") {
+                    value
+                  }
+                  season: metafield(namespace: "cariuma-v2", key: "season") {
+                    value
+                  }
+                  evergreen: metafield(namespace: "cariuma-v2", key: "evergreen") {
+                    value
+                  }
+                  fabrication: metafield(namespace: "cariuma-v2", key: "fabrication") {
+                    value
+                  }
+                  materialComposition: metafield(namespace: "cariuma-v2", key: "material_composition") {
+                    value
+                  }
+                  category: metafield(namespace: "cariuma-v2", key: "category") {
+                    value
+                  }
+                  subcategory: metafield(namespace: "cariuma-v2", key: "subcategory") {
+                    value
+                  }
+                  sizeBreak: metafield(namespace: "cariuma-v2", key: "size_break") {
+                    value
+                  }
                   variants(first: 1) {
                     edges {
                       node {
                         id
                         price
                         compareAtPrice
+                        selectedOptions {
+                          name
+                          value
+                        }
+                        inventoryItem {
+                          countryCodeOfOrigin
+                        }
                       }
                     }
                   }
@@ -315,14 +346,38 @@ async function fetchCatalogProducts(catalogId) {
         imageUrl = product.featuredImage.url;
       }
       
-      // Get pricing from the first variant
+      // Get fields from the first variant
       let wholesalePrice = 0;
       let suggRetailPrice = 0;
+      let countryOfOrigin = '';
       
       if (product.variants?.edges?.length > 0) {
         const variant = product.variants.edges[0].node;
         wholesalePrice = parseFloat(variant.price) || 0;
-        suggRetailPrice = parseFloat(variant.compareAtPrice) || wholesalePrice * 2.5;
+        suggRetailPrice = parseFloat(variant.price) || 0;
+
+        // Extract countryCodeOfOrigin from inventoryItem if available
+        if (variant.inventoryItem && variant.inventoryItem.countryCodeOfOrigin) {
+          countryOfOrigin = variant.inventoryItem.countryCodeOfOrigin;
+        }
+      }
+
+      // Find the color option (if any) among the variants
+      let color = '';
+      if (product.variants?.edges) {
+        for (const variantEdge of product.variants.edges) {
+          const variant = variantEdge.node;
+          if (variant.selectedOptions) {
+            for (const option of variant.selectedOptions) {
+              const optionNameLower = option.name.toLowerCase();
+              if (optionNameLower === 'color' || optionNameLower === 'colorway') {
+                color = option.value;
+                break;
+              }
+            }
+          }
+          if (color) break;
+        }
       }
       
       // Return simplified product structure
@@ -330,26 +385,24 @@ async function fetchCatalogProducts(catalogId) {
         id: product.id,
         name: product.title,
         image: imageUrl,
-        styleNumber: '',
-        color: '',
-        colorCode: '',
-        season: '',
-        evergreen: 'No',
-        countryOfOrigin: '',
-        fabrication: '',
-        materialComposition: '',
-        category: product.productType || '',
-        subcategory: '',
-        sizeBreak: '1',
+        styleNumber: product.styleNumber ? product.styleNumber.value : '',
+        color: color,
+        colorCode: product.colorCode ? product.colorCode.value : '',
+        season: product.season ? product.season.value : '',
+        evergreen: product.evergreen && product.evergreen.value.toLowerCase() === 'true' ? 'Yes' : 'No',
+        countryOfOrigin: countryOfOrigin,
+        fabrication: product.fabrication ? product.fabrication.value : '',
+        materialComposition: product.materialComposition ? product.materialComposition.value : '',
+        category: product.category ? product.category.value : '',
+        subcategory: product.subcategory ? product.subcategory.value : '',
+        sizeBreak: product.sizeBreak ? product.sizeBreak.value : '',
         wholesalePrice,
         suggRetailPrice
       };
     });
   } catch (error) {
     console.error('Error fetching catalog products:', error);
-    
-    // Use alternative approach if the direct catalog query fails
-    return await fetchProductsAlternative(catalogId);
+    throw error;
   }
 }
 
@@ -382,12 +435,46 @@ async function fetchProductsAlternative(catalogId) {
               }
               productType
               tags
+              styleNumber: metafield(namespace: "cariuma-v2", key: "style_number") {
+                value
+              }
+              colorCode: metafield(namespace: "cariuma-v2", key: "color_code") {
+                value
+              }
+              season: metafield(namespace: "cariuma-v2", key: "season") {
+                value
+              }
+              evergreen: metafield(namespace: "cariuma-v2", key: "evergreen") {
+                value
+              }
+              fabrication: metafield(namespace: "cariuma-v2", key: "fabrication") {
+                value
+              }
+              materialComposition: metafield(namespace: "cariuma-v2", key: "material_composition") {
+                value
+              }
+              category: metafield(namespace: "cariuma-v2", key: "category") {
+                value
+              }
+              subcategory: metafield(namespace: "cariuma-v2", key: "subcategory") {
+                value
+              }
+              sizeBreak: metafield(namespace: "cariuma-v2", key: "size_break") {
+                value
+              }
               variants(first: 1) {
                 edges {
                   node {
                     id
                     price
                     compareAtPrice
+                    selectedOptions {
+                      name
+                      value
+                    }
+                    inventoryItem {
+                      countryCodeOfOrigin
+                    }
                   }
                 }
               }
@@ -415,11 +502,35 @@ async function fetchProductsAlternative(catalogId) {
         // Get pricing from the first variant
         let wholesalePrice = 0;
         let suggRetailPrice = 0;
+        let countryOfOrigin = '';
         
         if (product.variants?.edges?.length > 0) {
           const variant = product.variants.edges[0].node;
           wholesalePrice = parseFloat(variant.price) || 0;
-          suggRetailPrice = parseFloat(variant.compareAtPrice) || wholesalePrice * 2.5;
+          suggRetailPrice = parseFloat(variant.compareAtPrice) || wholesalePrice;
+          
+          // Extract countryCodeOfOrigin from inventoryItem if available
+          if (variant.inventoryItem && variant.inventoryItem.countryCodeOfOrigin) {
+            countryOfOrigin = variant.inventoryItem.countryCodeOfOrigin;
+          }
+        }
+
+        // Find the color option (if any) among the variants
+        let color = '';
+        if (product.variants?.edges) {
+          for (const variantEdge of product.variants.edges) {
+            const variant = variantEdge.node;
+            if (variant.selectedOptions) {
+              for (const option of variant.selectedOptions) {
+                const optionNameLower = option.name.toLowerCase();
+                if (optionNameLower === 'color' || optionNameLower === 'colorway') {
+                  color = option.value;
+                  break;
+                }
+              }
+            }
+            if (color) break;
+          }
         }
         
         // Return simplified product structure
@@ -427,29 +538,29 @@ async function fetchProductsAlternative(catalogId) {
           id: product.id,
           name: product.title,
           image: imageUrl,
-          styleNumber: '',
-          color: '',
-          colorCode: '',
-          season: '',
-          evergreen: 'No',
-          countryOfOrigin: '',
-          fabrication: '',
-          materialComposition: '',
-          category: product.productType || '',
-          subcategory: '',
-          sizeBreak: '1',
+          styleNumber: product.styleNumber ? product.styleNumber.value : '',
+          color: color,
+          colorCode: product.colorCode ? product.colorCode.value : '',
+          season: product.season ? product.season.value : '',
+          evergreen: product.evergreen && product.evergreen.value.toLowerCase() === 'true' ? 'Yes' : 'No',
+          countryOfOrigin: countryOfOrigin,
+          fabrication: product.fabrication ? product.fabrication.value : '',
+          materialComposition: product.materialComposition ? product.materialComposition.value : '',
+          category: product.category ? product.category.value : product.productType || '',
+          subcategory: product.subcategory ? product.subcategory.value : '',
+          sizeBreak: product.sizeBreak ? product.sizeBreak.value : '',
           wholesalePrice,
           suggRetailPrice
         };
       });
     }
     
-    // If still no products, use mock data
-    console.warn('Alternative product query failed, using mock data');
-    return getMockProducts(catalogId);
+    // If no products found, return empty array
+    console.warn('No products found using alternative query for catalog:', catalogId);
+    return [];
   } catch (error) {
     console.error('Alternative product query failed:', error);
-    return getMockProducts(catalogId);
+    throw error;
   }
 }
 
@@ -475,124 +586,27 @@ async function fetchLocationB2BData(locationId) {
     
     // 3. Just fetch products for each catalog
     for (const catalog of catalogs) {
-      catalog.products = await fetchCatalogProducts(catalog.id);
+      try {
+        catalog.products = await fetchCatalogProducts(catalog.id);
+        console.log(`Fetched ${catalog.products.length} products for catalog ${catalog.name}`);
+      } catch (error) {
+        console.error(`Error fetching products for catalog ${catalog.name}:`, error);
+        // Try alternative approach if main approach fails
+        try {
+          catalog.products = await fetchProductsAlternative(catalog.id);
+          console.log(`Fetched ${catalog.products.length} products using alternative method for catalog ${catalog.name}`);
+        } catch (altError) {
+          console.error(`Alternative product fetch also failed for catalog ${catalog.name}:`, altError);
+          catalog.products = [];
+        }
+      }
     }
     
     return { ...locationData, catalogs };
   } catch (error) {
     console.error('Error fetching complete B2B data for location:', error);
-    
-    // Return mock data as fallback
-    return {
-      location: {
-        id: `gid://shopify/CompanyLocation/mock`,
-        name: 'Mock Location',
-        currency: 'USD',
-        address: {}
-      },
-      company: {
-        id: `gid://shopify/Company/mock`,
-        name: 'Mock Company',
-        contact: {}
-      },
-      catalogs: getMockCatalogs().map(catalog => {
-        catalog.products = getMockProducts(catalog.id);
-        return catalog;
-      })
-    };
+    throw error;
   }
-}
-
-/**
- * Get mock catalog data for development/testing
- */
-function getMockCatalogs() {
-  return [
-    {
-      id: "gid://shopify/Catalog/12345",
-      name: "SS25 Style",
-      status: "ACTIVE",
-      seasonYear: "Spring/Summer 2025",
-      startShip: "2025-01-15",
-      completeShip: "2025-02-28"
-    },
-    {
-      id: "gid://shopify/Catalog/67890",
-      name: "FW25 Style",
-      status: "ACTIVE",
-      seasonYear: "Fall/Winter 2025",
-      startShip: "2025-07-15",
-      completeShip: "2025-08-30"
-    }
-  ];
-}
-
-/**
- * Get mock product data for development/testing
- */
-function getMockProducts(catalogId) {
-  if (catalogId.includes('12345')) {
-    return [
-      {
-        id: "gid://shopify/Product/prod1",
-        image: "/api/placeholder/120/120",
-        name: "Sneaker Model A",
-        styleNumber: "12345",
-        color: "Black",
-        colorCode: "B001",
-        season: "SS25",
-        evergreen: "No",
-        countryOfOrigin: "Vietnam",
-        fabrication: "Canvas",
-        materialComposition: "100% Cotton",
-        category: "Shoes",
-        subcategory: "Sneakers",
-        sizeBreak: "1",
-        wholesalePrice: 33.31,
-        suggRetailPrice: 114.00
-      },
-      {
-        id: "gid://shopify/Product/prod2",
-        image: "/api/placeholder/120/120",
-        name: "Sneaker Model B",
-        styleNumber: "12346",
-        color: "White",
-        colorCode: "W001",
-        season: "SS25",
-        evergreen: "No",
-        countryOfOrigin: "Vietnam",
-        fabrication: "Canvas",
-        materialComposition: "100% Cotton",
-        category: "Shoes",
-        subcategory: "Sneakers",
-        sizeBreak: "1",
-        wholesalePrice: 33.31,
-        suggRetailPrice: 114.00
-      }
-    ];
-  } else if (catalogId.includes('67890')) {
-    return [
-      {
-        id: "gid://shopify/Product/prod4",
-        image: "/api/placeholder/120/120",
-        name: "Winter Boot A",
-        styleNumber: "34567",
-        color: "Brown",
-        colorCode: "BR001",
-        season: "FW25",
-        evergreen: "No",
-        countryOfOrigin: "Italy",
-        fabrication: "Leather",
-        materialComposition: "100% Leather",
-        category: "Shoes",
-        subcategory: "Boots",
-        sizeBreak: "1",
-        wholesalePrice: 62.50,
-        suggRetailPrice: 169.00
-      }
-    ];
-  }
-  return [];
 }
 
 module.exports = {

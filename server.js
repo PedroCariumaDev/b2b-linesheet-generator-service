@@ -151,6 +151,31 @@ app.post('/api/generate-linesheet', async (req, res) => {
     console.log(`Generating ${outputType} linesheet for ${company.name}`);
     console.log(`Selected catalogs: ${catalogIds.join(', ')}`);
     
+    // Log detailed product data for debugging
+    console.log('Request body for Excel generation:');
+    console.log(JSON.stringify({
+      company: req.body.company,
+      outputType: req.body.outputType,
+      catalogSummary: req.body.catalogs.map(catalog => ({
+        id: catalog.id,
+        name: catalog.name,
+        productCount: catalog.products ? catalog.products.length : 0
+      }))
+    }, null, 2));
+    
+    // For detailed debugging, log all products in each catalog
+    req.body.catalogs.forEach((catalog, i) => {
+      console.log(`\n----- Catalog ${i+1}: ${catalog.name} (${catalog.id}) -----`);
+      if (catalog.products && catalog.products.length > 0) {
+        console.log(`Total products in catalog: ${catalog.products.length}`);
+        console.log('Complete product array:');
+        console.log(JSON.stringify(catalog.products, null, 2));
+      } else {
+        console.log('No products in this catalog');
+      }
+      console.log('-'.repeat(50));
+    });
+    
     // Generate Excel file(s)
     const result = await generateExcel(req.body);
     
@@ -240,5 +265,6 @@ app.post('/api/generate-linesheet', async (req, res) => {
 // Start the server
 app.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
-  console.log(`Allowing requests from: ${allowedOrigin}`);
+  // Fix the undefined variable by using the allowedOrigins array instead
+  console.log(`Allowing requests from: ${JSON.stringify(allowedOrigins)}`);
 });
